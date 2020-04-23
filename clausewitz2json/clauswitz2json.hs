@@ -19,10 +19,10 @@ import qualified Text.Parsec.Language as L
 import GHC.Generics
 import Data.Aeson (encode, ToJSON, toEncoding , toJSON, (.=), object, pairs, Value, toJSONList, Value(Null))
 
-clausewitz :: P.TokenParser st
+clausewitz :: P.TokenParser ()
 clausewitz = P.makeTokenParser clausewitzDef
 
-clausewitzDef :: P.LanguageDef st
+clausewitzDef :: P.LanguageDef ()
 clausewitzDef = L.emptyDef
   { P.commentStart = ""
   , P.commentEnd = ""
@@ -55,7 +55,7 @@ data COperator = L | LE | E | GE | G
 data Clausewitz = CIdent CIdentifier | CLit CLiteral | CRef CReference
   | CBool Bool | CNum (Either Integer Double) | CDate Integer Integer Integer
   | CMap [(Either CIdentifier Integer, COperator, Clausewitz)]
-  | CLitList [CLiteral] | CIdentList [CIdentifier]
+  | CList [Clausewitz]
   deriving (Show, Generic)
 
 data Definition = Variable CReference Clausewitz | Data CIdentifier Clausewitz
@@ -87,8 +87,7 @@ instance ToJSON Clausewitz where
       item (Left i, op, c) = [pack ('~':i) .= object [(operatorToText op) .= toJSON c]]
       item (Right i, E,  c) = [(pack . show) i .= toJSON c]
     
-  toJSON (CLitList x) = toJSON x
-  toJSON (CIdentList x) = toJSON x
+  toJSON (CList x) = toJSONList x
 
 identifier :: Parser CIdentifier
 identifier = P.identifier clausewitz
@@ -119,8 +118,7 @@ value :: Parser Clausewitz
 value = (CIdent <$> identifier)
         <|> (braces $ (
                 try (CMap <$> many1 mappingItem)
-                <|> (CIdentList <$> many1 identifier)
-                <|> (CLitList <$> many1 literal)
+                <|> (CList <$> many1 value)
                 <|> (pure $ CMap []))
             )
         <|> try (signedDate
@@ -189,6 +187,7 @@ parseStr s = case parse clausewitzParser "" s of
   Right r -> r
 
 main :: IO ()
-main = do
-  input <- getContents
-  BL.putStr $ encode $((\(lut, cs) -> dereference lut cs) . collect) $ parseStr input
+main = BL.putStr . encode
+       . (\(lut, cs) -> dereference lut cs)
+       . collect . parseStr
+       =<< getContents
