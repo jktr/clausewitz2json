@@ -7,6 +7,7 @@ import qualified Data.Map as Map
 import Data.Maybe
 
 import Data.Text (pack, Text)
+import Text.Printf (printf)
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
@@ -17,7 +18,14 @@ import qualified Text.Parsec.Token as P
 import qualified Text.Parsec.Language as L
 
 import GHC.Generics
-import Data.Aeson (encode, ToJSON, toEncoding , toJSON, (.=), object, pairs, Value, toJSONList, Value(Null))
+import Data.Aeson (encode, ToJSON, toEncoding , toJSON, (.=), object, pairs, Value, toJSONList, Value(Null), KeyValue)
+
+import Data.List (groupBy, sortBy)
+import Data.Ord (comparing)
+
+import Data.Bifunctor (bimap)
+
+import Debug.Trace (trace)
 
 clausewitz :: P.TokenParser ()
 clausewitz = P.makeTokenParser clausewitzDef
@@ -50,7 +58,7 @@ type CIdentifier = String
 type CLiteral = String
 
 data COperator = L | LE | E | GE | G
-  deriving (Show, Generic)
+  deriving (Generic, Eq)
 
 data Clausewitz = CIdent CIdentifier | CLit CLiteral | CRef CReference
   | CBool Bool | CNum (Either Integer Double) | CDate Integer Integer Integer
@@ -61,33 +69,41 @@ data Clausewitz = CIdent CIdentifier | CLit CLiteral | CRef CReference
 data Definition = Variable CReference Clausewitz | Data CIdentifier Clausewitz
   deriving (Show, Generic)
 
-operatorToText :: COperator -> Text
-operatorToText L  = ("<" :: Text)
-operatorToText LE = ("<=" :: Text)
-operatorToText E  = ("=" :: Text)
-operatorToText GE = (">=" :: Text)
-operatorToText G  = (">" :: Text)
+instance Show COperator where
+  show L  = "<"
+  show LE = "<="
+  show E  = "="
+  show GE = ">="
+  show G  = ">"
 
 instance ToJSON COperator where
-  toJSON op = toJSON $ operatorToText op
+  toJSON op = (toJSON . show) op
 
 instance ToJSON Clausewitz where
   toJSON (CIdent x) = toJSON x
-  toJSON (CLit x) = toJSON $ "!" ++ x
-  toJSON (CRef x) = toJSON ('@':x)
+  toJSON (CLit x) = toJSON $ "!lit:" ++ x
+  toJSON (CRef x) = toJSON $ "!def:" ++ x
   toJSON (CBool x) = toJSON x
   toJSON (CNum (Left x)) = toJSON x
   toJSON (CNum (Right x)) = toJSON x
-  toJSON (CDate y m d) = toJSON . pack . concat
-                         $ [show y, ('-':show m), ('-':show d)]
-  
-  toJSON (CMap x) = (object . concat) $ item <$> x
+  toJSON (CDate y m d) = toJSON (printf "!date:%04d-%02d-%02d" y m d :: String)
+  toJSON (CList xs) = toJSONList xs
+  toJSON (CMap xs) = (object . concat . map items . group)
+    $ map (\(e, op, c) -> (e, (op, c))) xs
     where
-      item (Left i, E,  c) = [pack i .= toJSON c]
-      item (Left i, op, c) = [pack ('~':i) .= object [(operatorToText op) .= toJSON c]]
-      item (Right i, E,  c) = [(pack . show) i .= toJSON c]
-    
-  toJSON (CList x) = toJSONList x
+      items :: (Either CIdentifier Integer, [(COperator, Clausewitz)]) -> [(Text, Value)]
+      items (Right i, xs) = [(pack . show) i .= toJSON xs]
+      items (Left i, xs)
+        | any (\x -> fst x /= E) xs =
+          [pack ("!cmp:" ++ i) .=
+           (object(map (uncurry (.=) . bimap (pack . show) toJSON) xs))]
+        | length xs > 1 = [pack i .= toJSONList (map snd xs)]
+        | otherwise = [pack i .= (toJSON . head . map snd) xs]
+
+group :: Ord k => [(k, v)] -> [(k, [v])]
+group xs = map (\xs -> (fst $ head xs, map snd xs))
+           $ groupBy (\x1 x2 -> fst x1 == fst x2)
+           $ sortBy (comparing fst) xs
 
 identifier :: Parser CIdentifier
 identifier = P.identifier clausewitz
@@ -119,7 +135,7 @@ value = (CIdent <$> identifier)
         <|> (braces $ (
                 try (CMap <$> many1 mappingItem)
                 <|> (CList <$> many1 value)
-                <|> (pure $ CMap []))
+                <|> (pure $ CList []))
             )
         <|> try (signedDate
                  <$> option '+' (char '-')
@@ -139,10 +155,12 @@ value = (CIdent <$> identifier)
     bool = (reserved "yes" >> return True)
            <|> (reserved "no" >> return False)
     signedNumber :: Char -> Either Integer Double -> Clausewitz
-    signedNumber s n = CNum $ case s of
-      '+' -> n
-      '-' -> negate <$> n
-
+    signedNumber s (Left n) = CNum $ case s of
+      '+' -> Left n
+      '-' -> Left $ negate n
+    signedNumber s (Right n) = CNum $ case s of
+      '+' -> Right n
+      '-' -> Right $ negate n
 
 clausewitzParser :: Parser [Definition]
 clausewitzParser = whiteSpace >> many (
