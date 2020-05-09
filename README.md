@@ -1,16 +1,27 @@
 # clausewitz2json
 
+Disclaimer: Please note that this code is largely experimental.
+It should probably be refactored, receive a proper test suite and
+build system configuration, and have a looking over by someone with
+more haskell experience. There also does not seem to be an
+authoritative clausewitz language spec, so support may be incomplete
+as development used only stellaris/CK2/EU4 sources.
+
+---
+
 Paradox Interactive's Clausewitz Engine uses a custem plain-text file
-format in its game files. The use of a format unique to the engine makes
-automated processing and analysis of these files difficult. As a
+format in its game files. The use of a format unique to the engine
+makes automated processing and analysis of these files difficult. As a
 result, this project aims to implement a format conversion to (and
-from) json, which should simplify working with these files considerably.
+from) json, which should simplify working with and building tooling
+for these files considerably.
 
 These features are currently implemented:
   - clausewitz source parser (lossless)
   - JSON DSL emitter (lossy)
   
 Notable missing features are:
+  - proper handling of source encoding (affects eu4, ck2)
   - clausewitz DSL emitter
   - JSON DSL emitter (lossless)
 
