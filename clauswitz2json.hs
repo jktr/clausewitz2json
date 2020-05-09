@@ -25,7 +25,7 @@ import Data.Aeson (encode, ToJSON, toEncoding , toJSON, (.=), object, pairs, Val
 import Data.List (groupBy, sortBy)
 import Data.Ord (comparing)
 
-import Data.Bifunctor (bimap)
+import Data.Bifunctor (bimap, first, second)
 
 import Debug.Trace (trace)
 
@@ -62,13 +62,23 @@ type CLiteral = String
 data COperator = L | LE | E | GE | G
   deriving (Generic, Eq)
 
-data Clausewitz = CIdent CIdentifier | CLit CLiteral | CRef CReference
-  | CBool Bool | CNum (Either Integer Double) | CDate Integer Integer Integer
-  | CMap [(Either CIdentifier Integer, COperator, Clausewitz)]
+type CNumber = Either Integer Double
+type CMatrix = Map.Map Integer CNumber
+type CMap = Map.Map CIdentifier [(COperator, Clausewitz)]
+type CDate = (Integer, Integer, Integer)
+
+data Clausewitz = CIdentifier CIdentifier
+  | CLiteral CLiteral
+  | CReference CReference
+  | CBool Bool
+  | CNum CNumber
+  | CDate CDate
+  | CMap CMap
   | CList [Clausewitz]
   deriving (Show, Generic)
 
-data Definition = Variable CReference Clausewitz | Data CIdentifier Clausewitz
+data Definition = Variable CReference Clausewitz
+  | Data CIdentifier Clausewitz
   deriving (Show, Generic)
 
 instance Show COperator where
@@ -82,9 +92,9 @@ instance ToJSON COperator where
   toJSON op = (toJSON . show) op
 
 instance ToJSON Clausewitz where
-  toJSON (CIdent x) = toJSON x
-  toJSON (CLit x) = toJSON $ "!lit:" ++ x
-  toJSON (CRef x) = toJSON $ "!var:" ++ x
+  toJSON (CIdentifier x) = toJSON x
+  toJSON (CLiteral x) = toJSON $ "!lit:" ++ x
+  toJSON (CReference x) = toJSON $ "!var:" ++ x
   toJSON (CBool x) = toJSON x
   toJSON (CNum (Left x)) = toJSON x
   toJSON (CNum (Right x)) = toJSON x
@@ -93,7 +103,7 @@ instance ToJSON Clausewitz where
   toJSON (CMap xs) = (object . concat . map items . group)
     $ map (\(e, op, c) -> (e, (op, c))) xs
     where
-      items :: (Either CIdentifier Integer, [(COperator, Clausewitz)]) -> [(Text, Value)]
+      items :: CMap -> [(Text, Value)]
       items (Right i, xs) = [(pack . show) i .= toJSON xs]
       items (Left i, xs)
         | any (\x -> fst x /= E) xs =
@@ -128,26 +138,26 @@ binaryOp = op <$> operator
     op ">=" = GE
     op ">" = G
 
-mappingItem :: Parser (Either CIdentifier Integer, COperator, Clausewitz)
+mappingItem :: Parser CMap
 mappingItem = (\a b c-> (a, b, c)) <$>
   ((Left <$> identifier) <|>( Right <$> natural)) <*> binaryOp <*> value
 
 value :: Parser Clausewitz
-value = (CIdent <$> identifier)
-        <|> (braces $ (
-                try (CMap <$> many1 mappingItem)
-                <|> (CList <$> many1 value)
-                <|> (pure $ CList []))
-            )
-        <|> try (signedDate
-                 <$> option '+' (char '-')
-                 <*> (natural <* char '.')
-                 <*> (natural <* char '.')
-                 <*> natural)
-        <|> (signedNumber <$> (option '+' $ oneOf "+-") <*> naturalOrFloat)
-        <|> (CLit <$> literal)
-        <|> (CRef <$> reference)
-        <|> (CBool <$> bool)
+value = (CIdentifier <$> identifier)
+             <|> (braces $ (
+                     try (CMap <$> many1 mappingItem)
+                     <|> (CList <$> many1 value)
+                     <|> (pure $ CList []))
+                 )
+             <|> try (signedDate
+                      <$> option '+' (char '-')
+                      <*> (natural <* char '.')
+                      <*> (natural <* char '.')
+                      <*> natural)
+             <|> (signedNumber <$> (option '+' $ oneOf "+-") <*> naturalOrFloat)
+             <|> (CLiteral<$> literal)
+             <|> (CReference<$> reference)
+             <|> (CBool <$> bool)
 
   where
     signedDate :: Char -> Integer -> Integer -> Integer -> Clausewitz
@@ -174,8 +184,7 @@ rightToMaybe :: Either a b -> Maybe b
 rightToMaybe (Left _) = Nothing
 rightToMaybe (Right x) = Just x
 
-collect :: [Definition] -> (Map.Map CReference Clausewitz,
-                            [Map.Map CIdentifier Clausewitz])
+collect :: [Definition] -> (Map.Map CReference Clausewitz, [CMap])
 collect ds = (
   Map.fromList $ tuple <$> filter isVar ds,
   ((\x -> Map.fromList [x]) . tuple) <$> filter (not . isVar) ds
@@ -186,19 +195,17 @@ collect ds = (
     isVar (Variable _ _) = True
     isVar (Data _ _) = False
 
-dereference :: Map.Map CReference Clausewitz
-            -> [Map.Map CIdentifier Clausewitz]
-            -> [Map.Map CIdentifier Clausewitz]
+dereference :: Map.Map CReference Clausewitz -> [CMap] -> [CMap]
 dereference lut cs = Map.map (unvariable1 lut) <$> cs
 
+-- CONTINUE
 unvariable1 :: Map.Map CReference Clausewitz -> Clausewitz -> Clausewitz
-unvariable1 lut r@(CRef s) = Map.findWithDefault r s lut
-unvariable1 lut (CMap ms) = CMap $ (unvarMap lut) <$> ms
+unvariable1 lut r@(CReference s) = Map.findWithDefault r s lut
+unvariable1 lut (CMap m) = CMap $ map (second $ unvarCMap lut) m
   where
-    unvarMap :: Map.Map CReference Clausewitz
-      -> (Either CIdentifier Integer, COperator, Clausewitz)
-      -> (Either CIdentifier Integer, COperator, Clausewitz)
-    unvarMap lut (s, op, c) = (s, op, unvariable1 lut c)
+    unvarCMap :: Map.Map CReference Clausewitz -> CMap -> CMap
+--    unvarCMap lut m = map (second $ unvariable1 lut) m
+    unvarCMap lut m = map (\(op, c) -> (op, unvariable1 lut c)) m
 unvariable1 _ c = c
 
 parseStr :: String -> [Definition]
