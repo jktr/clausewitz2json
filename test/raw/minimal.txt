@@ -1,4 +1,5 @@
 @var = 5
+@unused = 6
 a = { c c c }
 b = { "b" }
 c = {
@@ -15,11 +16,12 @@ e = {
   a = a
   b = "b"
   c = @var
-  d = 0.0
-  e = 4.6
-  f = { }
-  g = yes
-  h = 2000.01.01
-  i = 5
-  j = -6
+  d = @undefined
+  e = 0.0
+  f = 4.6
+  g = { }
+  h = yes
+  i = 2000.01.01
+  j = 5
+  k = -6
 }

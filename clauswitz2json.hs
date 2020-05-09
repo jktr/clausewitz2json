@@ -82,7 +82,7 @@ instance ToJSON COperator where
 instance ToJSON Clausewitz where
   toJSON (CIdent x) = toJSON x
   toJSON (CLit x) = toJSON $ "!lit:" ++ x
-  toJSON (CRef x) = toJSON $ "!def:" ++ x
+  toJSON (CRef x) = toJSON $ "!var:" ++ x
   toJSON (CBool x) = toJSON x
   toJSON (CNum (Left x)) = toJSON x
   toJSON (CNum (Right x)) = toJSON x
